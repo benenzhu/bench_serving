@@ -372,9 +372,10 @@ def sample_random_requests(
     tokenizer: PreTrainedTokenizerBase,
     use_chat_template: bool = False,
 ) -> List[Tuple[str, int, int]]:
-    prefix_token_ids = np.random.randint(0,
-                                         tokenizer.vocab_size,
-                                         size=prefix_len).tolist()
+    # Create random number generator
+    rng = np.random.default_rng()
+    prefix_token_ids = rng.integers(0, tokenizer.vocab_size, size=prefix_len).tolist()
+
     if use_chat_template:
         chat_template_dummy = tokenizer.apply_chat_template(
             [{"role": "user", "content": "a"}],
@@ -385,26 +386,26 @@ def sample_random_requests(
         chat_template_len = len(tokenized_chat_template_dummy) - 1
         input_len = input_len - chat_template_len
 
-    input_lens = np.random.randint(
-        int(input_len * range_ratio),
-        input_len + 1,
-        size=num_prompts,
-    )
-    output_lens = np.random.randint(
-        int(output_len * range_ratio),
-        output_len + 1,
-        size=num_prompts,
-    )
-    offsets = np.random.randint(0, tokenizer.vocab_size, size=num_prompts)
+    isl_std = (input_len * (1.0 - range_ratio)) / 3.0  # 99.7% of prompts are between [1-rang_ratio, 1+range_ratio]
+    max_input_len = input_len * (1.0 + range_ratio)
+    input_lens = rng.normal(loc=input_len, scale=isl_std, size=num_prompts).astype(int)
+
+    osl_std = (output_len * (1.0 - range_ratio)) / 3.0  # 99.7% of prompts are between [1-rang_ratio, 1+range_ratio]
+    max_output_len = output_len * (1.0 + range_ratio)
+    output_lens = rng.normal(loc=output_len, scale=osl_std, size=num_prompts).astype(int)
+
+    offsets = rng.integers(0, tokenizer.vocab_size, size=num_prompts)
+
     input_requests = []
     for i in range(num_prompts):
-        prompt = tokenizer.decode(prefix_token_ids +
-                                  [(offsets[i] + i + j) % tokenizer.vocab_size
-                                   for j in range(input_lens[i])])
-        re_encoded_sequence = tokenizer.encode(prompt, add_special_tokens=False)[
-                :(prefix_len + input_lens[i])
-            ]
-        prompt = tokenizer.decode(re_encoded_sequence)
+        prompt_len = prefix_len + input_lens[i]
+        token_ids = prefix_token_ids + [(offsets[i] + i + j) % tokenizer.vocab_size for j in range(input_lens[i])]
+
+        # Create prompt_token_ids by decoding and encoding token_ids
+        # Truncate when needed due to decode and encode are not inverse functions
+        prompt_token_ids = tokenizer.encode(tokenizer.decode(token_ids), add_special_tokens=False)[:prompt_len]
+        prompt = tokenizer.decode(prompt_token_ids)
+
         if use_chat_template:
             prompt = tokenizer.apply_chat_template(
                 [{"role": "user", "content": prompt}],
