@@ -410,16 +410,22 @@ def sample_random_requests(
         input_requests.append((prompt, prompt_len, output_lens[i], None))
 
     print(
-        f'input_lens: min={min(r[1] for r in input_requests)} '
+        f'input_lens: '
+        f'min={min(r[1] for r in input_requests)} '
+        f'p1={np.percentile([r[1] for r in input_requests], 1):.2f} '
+        f'p99={np.percentile([r[1] for r in input_requests], 99):.2f} '
         f'max={max(r[1] for r in input_requests)} '
-        f'mean={np.mean([r[1] for r in input_requests]):.4f} '
-        f'std={np.std([r[1] for r in input_requests]):.4f}'
+        f'mean={np.mean([r[1] for r in input_requests]):.2f} '
+        f'std={np.std([r[1] for r in input_requests]):.2f}'
     )
     print(
-        f'output_lens: min={min(r[2] for r in input_requests)} '
+        f'output_lens: '
+        f'min={min(r[2] for r in input_requests)} '
+        f'p1={np.percentile([r[2] for r in input_requests], 1):.2f} '
+        f'p99={np.percentile([r[2] for r in input_requests], 99):.2f} '
         f'max={max(r[2] for r in input_requests)} '
-        f'mean={np.mean([r[2] for r in input_requests]):.4f} '
-        f'std={np.std([r[2] for r in input_requests]):.4f}'
+        f'mean={np.mean([r[2] for r in input_requests]):.2f} '
+        f'std={np.std([r[2] for r in input_requests]):.2f}'
     )
 
     return input_requests
