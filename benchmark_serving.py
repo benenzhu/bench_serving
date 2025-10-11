@@ -386,24 +386,17 @@ def sample_random_requests(
         chat_template_len = len(tokenized_chat_template_dummy) - 1
         input_len = input_len - chat_template_len
 
-    isl_std = (input_len * (1.0 - range_ratio)) / 3.0  # 99.7% of prompts are between [1-rang_ratio, 1+range_ratio]
-    max_input_len = input_len * (1.0 + range_ratio)
-    input_lens = rng.normal(loc=input_len, scale=isl_std, size=num_prompts).astype(int)
+    isl_std = (input_len * range_ratio) / 3.0  # 99.7% of prompts are between [1-range_ratio, 1+range_ratio]
+    input_lens = rng.normal(loc=input_len, scale=isl_std, size=num_prompts).astype(int).tolist()
 
-    osl_std = (output_len * (1.0 - range_ratio)) / 3.0  # 99.7% of prompts are between [1-rang_ratio, 1+range_ratio]
-    max_output_len = output_len * (1.0 + range_ratio)
-    output_lens = rng.normal(loc=output_len, scale=osl_std, size=num_prompts).astype(int)
+    osl_std = (output_len * range_ratio) / 3.0  # 99.7% of prompts are between [1-range_ratio, 1+range_ratio]
+    output_lens = rng.normal(loc=output_len, scale=osl_std, size=num_prompts).astype(int).tolist()
 
     offsets = rng.integers(0, tokenizer.vocab_size, size=num_prompts)
 
     input_requests = []
     for i in range(num_prompts):
-        prompt_len = prefix_len + input_lens[i]
-        token_ids = prefix_token_ids + [(offsets[i] + i + j) % tokenizer.vocab_size for j in range(input_lens[i])]
-
-        # Create prompt_token_ids by decoding and encoding token_ids
-        # Truncate when needed due to decode and encode are not inverse functions
-        prompt_token_ids = tokenizer.encode(tokenizer.decode(token_ids), add_special_tokens=False)[:prompt_len]
+        prompt_token_ids = prefix_token_ids + [(offsets[i] + i + j) % tokenizer.vocab_size for j in range(input_lens[i])]
         prompt = tokenizer.decode(prompt_token_ids)
 
         if use_chat_template:
@@ -412,10 +405,22 @@ def sample_random_requests(
                 add_generation_prompt=True,
                 tokenize=False,
             )
-            input_lens[i] += chat_template_len
 
-        input_requests.append((prompt, int(prefix_len + input_lens[i]),
-                               int(output_lens[i]), None))
+        prompt_len = len(tokenizer.encode(prompt, add_special_tokens=False))
+        input_requests.append((prompt, prompt_len, output_lens[i], None))
+
+    print(
+        f'input_lens: min={min(r[1] for r in input_requests)} '
+        f'max={max(r[1] for r in input_requests)} '
+        f'mean={np.mean([r[1] for r in input_requests]):.4f} '
+        f'std={np.std([r[1] for r in input_requests]):.4f}'
+    )
+    print(
+        f'output_lens: min={min(r[2] for r in input_requests)} '
+        f'max={max(r[2] for r in input_requests)} '
+        f'mean={np.mean([r[2] for r in input_requests]):.4f} '
+        f'std={np.std([r[2] for r in input_requests]):.4f}'
+    )
 
     return input_requests
 
