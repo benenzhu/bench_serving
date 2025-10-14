@@ -386,12 +386,13 @@ def sample_random_requests(
         chat_template_len = len(tokenized_chat_template_dummy) - 1
         input_len = input_len - chat_template_len
 
-    isl_std = (input_len * range_ratio) / 3.0  # 99.7% of prompts are between [1-range_ratio, 1+range_ratio]
-    input_lens = rng.normal(loc=input_len, scale=isl_std, size=num_prompts).astype(int).tolist()
+    def sample_normal(seq_len):
+        std = (seq_len * range_ratio) / 3.0  # 99.7% of prompts are between [seq_len*(1-range_ratio), seq_len*(1+range_ratio)]
+        seq_lens = rng.normal(loc=seq_len, scale=std, size=num_prompts).astype(int).tolist()
+        return seq_lens
 
-    osl_std = (output_len * range_ratio) / 3.0  # 99.7% of prompts are between [1-range_ratio, 1+range_ratio]
-    output_lens = rng.normal(loc=output_len, scale=osl_std, size=num_prompts).astype(int).tolist()
-
+    input_lens = sample_normal(input_len)
+    output_lens = sample_normal(output_len)
     offsets = rng.integers(0, tokenizer.vocab_size, size=num_prompts)
 
     input_requests = []
