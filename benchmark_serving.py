@@ -410,25 +410,25 @@ def sample_random_requests(
         prompt_len = len(tokenizer.encode(prompt, add_special_tokens=False))
         input_requests.append((prompt, prompt_len, output_lens[i], None))
 
-    header_str = f'{"-"*20}  Random Range Ratio Statistics {"-"*20}'
+    header_str = f'{"-"*20} Input/Output Length Statistics {"-"*20}'
     print(header_str)
     print(
-        f'input_lens: '
-        f'min={min(r[1] for r in input_requests)} '
-        f'p1={np.percentile([r[1] for r in input_requests], 1):.2f} '
-        f'p99={np.percentile([r[1] for r in input_requests], 99):.2f} '
-        f'max={max(r[1] for r in input_requests)} '
-        f'mean={np.mean([r[1] for r in input_requests]):.2f} '
-        f'std={np.std([r[1] for r in input_requests]):.2f}'
+        f'input_lens : '
+        f'min={min(r[1] for r in input_requests):<4d}  '
+        f'p0.15={np.percentile([r[1] for r in input_requests], 0.15):<7.2f}  '
+        f'p99.85={np.percentile([r[1] for r in input_requests], 99.85):<7.2f}  '
+        f'max={max(r[1] for r in input_requests):<4d}  '
+        f'mean={np.mean([r[1] for r in input_requests]):<7.2f}  '
+        f'std={np.std([r[1] for r in input_requests]):<5.2f}  '
     )
     print(
         f'output_lens: '
-        f'min={min(r[2] for r in input_requests)} '
-        f'p1={np.percentile([r[2] for r in input_requests], 1):.2f} '
-        f'p99={np.percentile([r[2] for r in input_requests], 99):.2f} '
-        f'max={max(r[2] for r in input_requests)} '
-        f'mean={np.mean([r[2] for r in input_requests]):.2f} '
-        f'std={np.std([r[2] for r in input_requests]):.2f}'
+        f'min={min(r[2] for r in input_requests):<4d}  '
+        f'p0.15={np.percentile([r[2] for r in input_requests], 0.15):<7.2f}  '
+        f'p99.85={np.percentile([r[2] for r in input_requests], 99.85):<7.2f}  '
+        f'max={max(r[2] for r in input_requests):<4d}  '
+        f'mean={np.mean([r[2] for r in input_requests]):<7.2f}  '
+        f'std={np.std([r[2] for r in input_requests]):<5.2f}  '
     )
     print('-' * len(header_str), '\n')
 
@@ -600,6 +600,7 @@ async def benchmark(
     request_rate: float,
     burstiness: float,
     disable_tqdm: bool,
+    num_warmups: int,
     profile: bool,
     selected_percentile_metrics: List[str],
     selected_percentiles: List[str],
@@ -640,6 +641,25 @@ async def benchmark(
             f"are correctly specified. Error: {test_output.error}")
     else:
         print("Initial test run completed. Starting main benchmark run...")
+
+    if num_warmups > 0:
+        print(f"Warming up with {num_warmups} requests...")
+        warmup_pbar = None if disable_tqdm else tqdm(total=num_warmups)
+        warmup_semaphore = asyncio.Semaphore(max_concurrency) if max_concurrency else contextlib.nullcontext()
+
+        async def warmup_limited_req_fn():
+            async with warmup_semaphore:
+                return await request_func(request_func_input=test_input, pbar=warmup_pbar)
+
+        warmup_tasks = []
+        for _ in range(num_warmups):
+            task = asyncio.create_task(warmup_limited_req_fn())
+            warmup_tasks.append(task)
+        _ = await asyncio.gather(*warmup_tasks)
+
+        if warmup_pbar is not None:
+            warmup_pbar.close()
+        print("Warmup completed.")
 
     if lora_modules:
         # For each input request, choose a LoRA module at random.
@@ -916,14 +936,6 @@ def main(args: argparse.Namespace):
             tokenizer=tokenizer,
             fixed_output_len=args.sharegpt_output_len,
         )
-        if args.n_warmups > 0:
-            print('Creating warmup requests...')
-            warmup_requests = sample_sharegpt_requests(
-                dataset_path=args.dataset_path,
-                num_requests=args.n_warmups,
-                tokenizer=tokenizer,
-                fixed_output_len=args.sharegpt_output_len,
-            )
 
     elif args.dataset_name == "sharegpt":
         input_requests = sample_sharegpt_requests(
@@ -932,14 +944,6 @@ def main(args: argparse.Namespace):
             tokenizer=tokenizer,
             fixed_output_len=args.sharegpt_output_len,
         )
-        if args.n_warmups > 0:
-            print('Creating warmup requests...')
-            warmup_requests = sample_sharegpt_requests(
-                dataset_path=args.dataset_path,
-                num_requests=args.n_warmups,
-                tokenizer=tokenizer,
-                fixed_output_len=args.sharegpt_output_len,
-            )
 
     elif args.dataset_name == "burstgpt":
         input_requests = sample_burstgpt_requests(
@@ -948,14 +952,6 @@ def main(args: argparse.Namespace):
             random_seed=args.seed,
             tokenizer=tokenizer,
         )
-        if args.n_warmups > 0:
-            print('Creating warmup requests...')
-            warmup_requests = sample_burstgpt_requests(
-                dataset_path=args.dataset_path,
-                num_requests=args.n_warmups,
-                random_seed=args.seed,
-                tokenizer=tokenizer,
-            )
 
     elif args.dataset_name == "sonnet":
         # Do not format the prompt, pass to message directly
@@ -971,20 +967,6 @@ def main(args: argparse.Namespace):
             input_requests = [(prompt, prompt_len, output_len, None)
                               for prompt, prompt_formatted, prompt_len,
                               output_len, _ in input_requests]
-
-            if args.n_warmups > 0:
-                print('Creating warmup requests...')
-                warmup_requests = sample_sonnet_requests(
-                    dataset_path=args.dataset_path,
-                    num_requests=args.n_warmups,
-                    input_len=args.sonnet_input_len,
-                    output_len=args.sonnet_output_len,
-                    prefix_len=args.sonnet_prefix_len,
-                    tokenizer=tokenizer,
-                )
-                warmup_requests = [(prompt, prompt_len, output_len, None)
-                                  for prompt, prompt_formatted, prompt_len,
-                                  output_len, _ in warmup_requests]
 
         else:
             assert (
@@ -1002,20 +984,6 @@ def main(args: argparse.Namespace):
                               for prompt, prompt_formatted, prompt_len,
                               output_len, _ in input_requests]
 
-            if args.n_warmups > 0:
-                print('Creating warmup requests...')
-                warmup_requests = sample_sonnet_requests(
-                    dataset_path=args.dataset_path,
-                    num_requests=args.n_warmups,
-                    input_len=args.sonnet_input_len,
-                    output_len=args.sonnet_output_len,
-                    prefix_len=args.sonnet_prefix_len,
-                    tokenizer=tokenizer,
-                )
-                warmup_requests = [(prompt_formatted, prompt_len, output_len, None)
-                                  for prompt, prompt_formatted, prompt_len,
-                                  output_len, _ in warmup_requests]
-
     elif args.dataset_name == "hf":
         input_requests = sample_hf_requests(
             dataset_path=args.dataset_path,
@@ -1026,17 +994,6 @@ def main(args: argparse.Namespace):
             random_seed=args.seed,
             fixed_output_len=args.hf_output_len,
         )
-        if args.n_warmups > 0:
-            print('Creating warmup requests...')
-            warmup_requests = sample_hf_requests(
-                dataset_path=args.dataset_path,
-                dataset_subset=args.hf_subset,
-                dataset_split=args.hf_split,
-                num_requests=args.n_warmups,
-                tokenizer=tokenizer,
-                random_seed=args.seed,
-                fixed_output_len=args.hf_output_len,
-            )
 
     elif args.dataset_name == "random":
         input_requests = sample_random_requests(
@@ -1048,17 +1005,6 @@ def main(args: argparse.Namespace):
             tokenizer=tokenizer,
             use_chat_template=args.use_chat_template,
         )
-        if args.n_warmups > 0:
-            print('Creating warmup requests...')
-            warmup_requests = sample_random_requests(
-                prefix_len=args.random_prefix_len,
-                input_len=args.random_input_len,
-                output_len=args.random_output_len,
-                num_prompts=args.n_warmups,
-                range_ratio=args.random_range_ratio,
-                tokenizer=tokenizer,
-                use_chat_template=args.use_chat_template,
-            )
 
     else:
         raise ValueError(f"Unknown dataset: {args.dataset_name}")
@@ -1068,33 +1014,6 @@ def main(args: argparse.Namespace):
     # Avoid GC processing "static" data - reduce pause times.
     gc.collect()
     gc.freeze()
-
-    if args.n_warmups > 0:
-        print(f'Warming up for {args.n_warmups} requests...')
-        _ = asyncio.run(
-            benchmark(
-                backend=backend,
-                api_url=api_url,
-                base_url=base_url,
-                model_id=model_id,
-                model_name=model_name,
-                tokenizer=tokenizer,
-                input_requests=warmup_requests,
-                logprobs=args.logprobs,
-                best_of=args.best_of,
-                request_rate=args.request_rate,
-                burstiness=args.burstiness,
-                disable_tqdm=args.disable_tqdm,
-                profile=args.profile,
-                selected_percentile_metrics=args.percentile_metrics.split(","),
-                selected_percentiles=[
-                    float(p) for p in args.metric_percentiles.split(",")
-                ],
-                ignore_eos=args.ignore_eos,
-                goodput_config_dict=goodput_config_dict,
-                max_concurrency=args.max_concurrency,
-                lora_modules=args.lora_modules,
-            ))
 
     benchmark_result = asyncio.run(
         benchmark(
@@ -1110,6 +1029,7 @@ def main(args: argparse.Namespace):
             request_rate=args.request_rate,
             burstiness=args.burstiness,
             disable_tqdm=args.disable_tqdm,
+            num_warmups=args.num_warmups,
             profile=args.profile,
             selected_percentile_metrics=args.percentile_metrics.split(","),
             selected_percentiles=[
@@ -1471,7 +1391,7 @@ if __name__ == "__main__":
                         "launching the server. For each request, the "
                         "script chooses a LoRA module at random.")
 
-    parser.add_argument('--n-warmups', type=int, default=0)
+    parser.add_argument('--num-warmups', type=int, default=0)
 
     args = parser.parse_args()
     main(args)
