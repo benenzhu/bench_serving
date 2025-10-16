@@ -373,8 +373,7 @@ def sample_random_requests(
     use_chat_template: bool = False,
 ) -> List[Tuple[str, int, int]]:
     # Create random number generator
-    rng = np.random.default_rng()
-    prefix_token_ids = rng.integers(0, tokenizer.vocab_size, size=prefix_len).tolist()
+    prefix_token_ids = np.random.randint(0, tokenizer.vocab_size, size=prefix_len).tolist()
 
     if use_chat_template:
         chat_template_dummy = tokenizer.apply_chat_template(
@@ -386,19 +385,34 @@ def sample_random_requests(
         chat_template_len = len(tokenized_chat_template_dummy) - 1
         input_len = input_len - chat_template_len
 
-    def sample_normal(seq_len):
-        std = (seq_len * range_ratio) / 3.0  # 99.7% of prompts are between [seq_len*(1-range_ratio), seq_len*(1+range_ratio)]
-        seq_lens = rng.normal(loc=seq_len, scale=std, size=num_prompts).astype(int).tolist()
+    def sample_uniform(seq_len):
+        lower = int(seq_len * (1.0 - range_ratio))
+        upper = int(seq_len * (1.0 + range_ratio))
+        seq_lens = np.random.randint(lower, upper+1, size=num_prompts).tolist()
         return seq_lens
 
-    input_lens = sample_normal(input_len)
-    output_lens = sample_normal(output_len)
-    offsets = rng.integers(0, tokenizer.vocab_size, size=num_prompts)
+    input_lens = sample_uniform(input_len)
+    output_lens = sample_uniform(output_len)
+    offsets = np.random.randint(0, tokenizer.vocab_size, size=num_prompts)
 
     input_requests = []
+    mismatches = []
     for i in range(num_prompts):
+        tgt_prompt_len = prefix_len + input_lens[i]
         prompt_token_ids = prefix_token_ids + [(offsets[i] + i + j) % tokenizer.vocab_size for j in range(input_lens[i])]
         prompt = tokenizer.decode(prompt_token_ids)
+
+        max_retries = 10
+        for _ in range(max_retries):
+            prompt_token_ids = tokenizer.encode(prompt, add_special_tokens=False)
+            if len(prompt_token_ids) < tgt_prompt_len:
+                num_extras = tgt_prompt_len - len(prompt_token_ids)
+                prompt_token_ids.extend(np.random.randint(0, tokenizer.vocab_size, size=num_extras).tolist())
+            elif len(prompt_token_ids) > tgt_prompt_len:
+                prompt_token_ids = prompt_token_ids[:tgt_prompt_len]
+            else:
+                break
+            prompt = tokenizer.decode(prompt_token_ids)
 
         if use_chat_template:
             prompt = tokenizer.apply_chat_template(
@@ -408,6 +422,7 @@ def sample_random_requests(
             )
 
         prompt_len = len(tokenizer.encode(prompt, add_special_tokens=False))
+        mismatches.append(prompt_len - tgt_prompt_len)
         input_requests.append((prompt, prompt_len, output_lens[i], None))
 
     header_str = f'{"-"*26}  Input/Output Length Statistics  {"-"*27}'
@@ -415,20 +430,15 @@ def sample_random_requests(
     print(
         f'input_lens : '
         f'min={min(r[1] for r in input_requests):<4d}  '
-        f'p0.15={np.percentile([r[1] for r in input_requests], 0.15):<7.2f}  '
-        f'p99.85={np.percentile([r[1] for r in input_requests], 99.85):<7.2f}  '
         f'max={max(r[1] for r in input_requests):<4d}  '
         f'mean={np.mean([r[1] for r in input_requests]):<7.2f}  '
-        f'std={np.std([r[1] for r in input_requests]):<5.2f}  '
+        f'avg_token_mismatch={np.mean(mismatches):<5.2f}'
     )
     print(
         f'output_lens: '
         f'min={min(r[2] for r in input_requests):<4d}  '
-        f'p0.15={np.percentile([r[2] for r in input_requests], 0.15):<7.2f}  '
-        f'p99.85={np.percentile([r[2] for r in input_requests], 99.85):<7.2f}  '
         f'max={max(r[2] for r in input_requests):<4d}  '
         f'mean={np.mean([r[2] for r in input_requests]):<7.2f}  '
-        f'std={np.std([r[2] for r in input_requests]):<5.2f}  '
     )
     print('-' * len(header_str), '\n')
 
