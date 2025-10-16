@@ -372,7 +372,6 @@ def sample_random_requests(
     tokenizer: PreTrainedTokenizerBase,
     use_chat_template: bool = False,
 ) -> List[Tuple[str, int, int]]:
-    # Create random number generator
     prefix_token_ids = np.random.randint(0, tokenizer.vocab_size, size=prefix_len).tolist()
 
     if use_chat_template:
@@ -425,20 +424,20 @@ def sample_random_requests(
         mismatches.append(prompt_len - tgt_prompt_len)
         input_requests.append((prompt, prompt_len, output_lens[i], None))
 
-    header_str = f'{"-"*26}  Input/Output Length Statistics  {"-"*27}'
+    header_str = f'{"-"*19}  Input/Output Length Statistics  {"-"*19}'
     print(header_str)
     print(
-        f'input_lens : '
+        f' input_lens : '
         f'min={min(r[1] for r in input_requests):<4d}  '
         f'max={max(r[1] for r in input_requests):<4d}  '
         f'mean={np.mean([r[1] for r in input_requests]):<7.2f}  '
-        f'avg_token_mismatch={np.mean(mismatches):<5.2f}'
+        f'avg_token_mismatch={np.mean(mismatches):<5.2f} '
     )
     print(
-        f'output_lens: '
+        f' output_lens: '
         f'min={min(r[2] for r in input_requests):<4d}  '
         f'max={max(r[2] for r in input_requests):<4d}  '
-        f'mean={np.mean([r[2] for r in input_requests]):<7.2f}  '
+        f'mean={np.mean([r[2] for r in input_requests]):<7.2f} '
     )
     print('-' * len(header_str), '\n')
 
