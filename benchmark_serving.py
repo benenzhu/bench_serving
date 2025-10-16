@@ -410,7 +410,7 @@ def sample_random_requests(
         prompt_len = len(tokenizer.encode(prompt, add_special_tokens=False))
         input_requests.append((prompt, prompt_len, output_lens[i], None))
 
-    header_str = f'{"-"*20} Input/Output Length Statistics {"-"*20}'
+    header_str = f'{"-"*26}  Input/Output Length Statistics  {"-"*27}'
     print(header_str)
     print(
         f'input_lens : '
@@ -634,13 +634,28 @@ async def benchmark(
         ignore_eos=ignore_eos,
     )
 
-    test_output = await request_func(request_func_input=test_input)
-    if not test_output.success:
+    # Take from vLLM ready_checker.py
+    # https://github.com/vllm-project/vllm/blob/e6ba2000aef3e61ca84bb114472badecbd533ee9/vllm/benchmarks/lib/ready_checker.py#L14
+    import aiohttp
+    timeout = 600
+    delay = 5
+    print(f"Waiting for endpoint to startup in {timeout} seconds")
+    for t in tqdm(range(timeout)):
+        if t % delay == 0:
+            try:
+                test_output = await request_func(request_func_input=test_input)
+                if test_output.success:
+                    break
+            except aiohttp.ClientConnectorError:
+                pass
+            await asyncio.sleep(delay)
+    else:
+        test_output = await request_func(request_func_input=test_input)
         raise ValueError(
             "Initial test run failed - Please make sure benchmark arguments "
-            f"are correctly specified. Error: {test_output.error}")
-    else:
-        print("Initial test run completed. Starting main benchmark run...")
+            f"are correctly specified. Error: {test_output.error}"
+        )
+    print("Initial test run completed. Starting main benchmark run...")
 
     if num_warmups > 0:
         print(f"Warming up with {num_warmups} requests...")
