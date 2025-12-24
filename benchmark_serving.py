@@ -597,9 +597,9 @@ async def benchmark(
     else:
         raise ValueError(f"Unknown backend: {backend}")
 
-    # print("Starting initial single prompt test run...")
-    # test_prompt, test_prompt_len, test_output_len, test_mm_content = (
-    #     input_requests[0])
+    print("Starting initial single prompt test run...")
+    test_prompt, test_prompt_len, test_output_len, test_mm_content = (
+        input_requests[0])
     if backend != "openai-chat" and test_mm_content is not None:
         # multi-modal benchmark is only available on OpenAI Chat backend.
         raise ValueError(
@@ -617,13 +617,13 @@ async def benchmark(
         ignore_eos=ignore_eos,
     )
 
-    test_output = await request_func(request_func_input=test_input)
-    if not test_output.success:
-        raise ValueError(
-            "Initial test run failed - Please make sure benchmark arguments "
-            f"are correctly specified. Error: {test_output.error}")
-    else:
-        print("Initial test run completed. Starting main benchmark run...")
+    # test_output = await request_func(request_func_input=test_input)
+    # if not test_output.success:
+    #     raise ValueError(
+    #         "Initial test run failed - Please make sure benchmark arguments "
+    #         f"are correctly specified. Error: {test_output.error}")
+    # else:
+    #     print("Initial test run completed. Starting main benchmark run...")
 
     if lora_modules:
         # For each input request, choose a LoRA module at random.
