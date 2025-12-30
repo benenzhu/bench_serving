@@ -371,10 +371,9 @@ def sample_random_requests(
     range_ratio: float,
     tokenizer: PreTrainedTokenizerBase,
     use_chat_template: bool = False,
-) -> List[Tuple[str, int, int]]:
-    prefix_token_ids = np.random.randint(0,
-                                         tokenizer.vocab_size,
-                                         size=prefix_len).tolist()
+) -> List[Tuple[str, int, int]]:    
+    prefix_token_ids = np.random.randint(0, tokenizer.vocab_size, size=prefix_len).tolist()
+
     if use_chat_template:
         chat_template_dummy = tokenizer.apply_chat_template(
             [{"role": "user", "content": "a"}],
@@ -385,36 +384,69 @@ def sample_random_requests(
         chat_template_len = len(tokenized_chat_template_dummy) - 1
         input_len = input_len - chat_template_len
 
-    input_lens = np.random.randint(
-        int(input_len * range_ratio),
-        input_len + 1,
-        size=num_prompts,
-    )
-    output_lens = np.random.randint(
-        int(output_len * range_ratio),
-        output_len + 1,
-        size=num_prompts,
-    )
+    def sample_uniform(seq_len):
+        lower = int(seq_len * (1.0 - range_ratio))
+        upper = int(seq_len * (1.0 + range_ratio))
+        seq_lens = np.random.randint(lower, upper+1, size=num_prompts).tolist()
+        return seq_lens
+
+    input_lens = sample_uniform(input_len)
+    output_lens = sample_uniform(output_len)
+
+    # Make the first request have maximum possible length to ensure the benchmark
+    # fails early if max_model_len is set too low
+    max_input_len = int(input_len * (1.0 + range_ratio + 0.02))
+    max_output_len = int(output_len * (1.0 + range_ratio + 0.02))
+    input_lens[0] = max_input_len
+    output_lens[0] = max_output_len
     offsets = np.random.randint(0, tokenizer.vocab_size, size=num_prompts)
+
     input_requests = []
+    mismatches = []
     for i in range(num_prompts):
-        prompt = tokenizer.decode(prefix_token_ids +
-                                  [(offsets[i] + i + j) % tokenizer.vocab_size
-                                   for j in range(input_lens[i])])
-        re_encoded_sequence = tokenizer.encode(prompt, add_special_tokens=False)[
-                :(prefix_len + input_lens[i])
-            ]
-        prompt = tokenizer.decode(re_encoded_sequence)
+        tgt_prompt_len = prefix_len + input_lens[i]
+        prompt_token_ids = prefix_token_ids + [(offsets[i] + i + j) % tokenizer.vocab_size for j in range(input_lens[i])]
+        prompt = tokenizer.decode(prompt_token_ids)
+
+        max_retries = 10
+        for _ in range(max_retries):
+            prompt_token_ids = tokenizer.encode(prompt, add_special_tokens=False)
+            if len(prompt_token_ids) < tgt_prompt_len:
+                num_extras = tgt_prompt_len - len(prompt_token_ids)
+                prompt_token_ids.extend(np.random.randint(0, tokenizer.vocab_size, size=num_extras).tolist())
+            elif len(prompt_token_ids) > tgt_prompt_len:
+                prompt_token_ids = prompt_token_ids[:tgt_prompt_len]
+            else:
+                break
+            prompt = tokenizer.decode(prompt_token_ids)
+
         if use_chat_template:
             prompt = tokenizer.apply_chat_template(
                 [{"role": "user", "content": prompt}],
                 add_generation_prompt=True,
                 tokenize=False,
             )
-            input_lens[i] += chat_template_len
 
-        input_requests.append((prompt, int(prefix_len + input_lens[i]),
-                               int(output_lens[i]), None))
+        prompt_len = len(tokenizer.encode(prompt, add_special_tokens=False))
+        mismatches.append(prompt_len - tgt_prompt_len)
+        input_requests.append((prompt, prompt_len, output_lens[i], None))
+
+    header_str = f'{"-"*19}  Input/Output Length Statistics  {"-"*19}'
+    print(header_str)
+    print(
+        f' input_lens : '
+        f'min={min(r[1] for r in input_requests):<4d}  '
+        f'max={max(r[1] for r in input_requests):<4d}  '
+        f'mean={np.mean([r[1] for r in input_requests]):<7.2f}  '
+        f'avg_token_mismatch={np.mean(mismatches):<5.2f} '
+    )
+    print(
+        f' output_lens: '
+        f'min={min(r[2] for r in input_requests):<4d}  '
+        f'max={max(r[2] for r in input_requests):<4d}  '
+        f'mean={np.mean([r[2] for r in input_requests]):<7.2f} '
+    )
+    print('-' * len(header_str), '\n')
 
     return input_requests
 
@@ -584,6 +616,7 @@ async def benchmark(
     request_rate: float,
     burstiness: float,
     disable_tqdm: bool,
+    num_warmups: int,
     profile: bool,
     selected_percentile_metrics: List[str],
     selected_percentiles: List[str],
@@ -597,9 +630,9 @@ async def benchmark(
     else:
         raise ValueError(f"Unknown backend: {backend}")
 
-    print("Starting initial single prompt test run...")
     test_prompt, test_prompt_len, test_output_len, test_mm_content = (
         input_requests[0])
+    print(f"Starting initial single prompt test run (input length {test_prompt_len}, output length {test_output_len})...")
     if backend != "openai-chat" and test_mm_content is not None:
         # multi-modal benchmark is only available on OpenAI Chat backend.
         raise ValueError(
@@ -616,14 +649,49 @@ async def benchmark(
         multi_modal_content=test_mm_content,
         ignore_eos=ignore_eos,
     )
+    
 
-    test_output = await request_func(request_func_input=test_input)
-    if not test_output.success:
+    # Take from vLLM ready_checker.py
+    # https://github.com/vllm-project/vllm/blob/e6ba2000aef3e61ca84bb114472badecbd533ee9/vllm/benchmarks/lib/ready_checker.py#L14
+    import aiohttp
+    timeout = 600
+    delay = 5
+    print(f"Waiting for endpoint to startup in {timeout} seconds")
+    for t in tqdm(range(timeout)):
+        if t % delay == 0:
+            try:
+                test_output = await request_func(request_func_input=test_input)
+                if test_output.success:
+                    break
+            except aiohttp.ClientConnectorError as e:
+                pass
+            await asyncio.sleep(delay)
+    else:
+        test_output = await request_func(request_func_input=test_input)
         raise ValueError(
             "Initial test run failed - Please make sure benchmark arguments "
-            f"are correctly specified. Error: {test_output.error}")
-    else:
-        print("Initial test run completed. Starting main benchmark run...")
+            f"are correctly specified. Error: {test_output.error}"
+        )
+    print("Initial test run completed. Starting main benchmark run...")
+
+    if num_warmups > 0:
+        print(f"Warming up with {num_warmups} requests...")
+        warmup_pbar = None if disable_tqdm else tqdm(total=num_warmups)
+        warmup_semaphore = asyncio.Semaphore(max_concurrency) if max_concurrency else contextlib.nullcontext()
+
+        async def warmup_limited_req_fn():
+            async with warmup_semaphore:
+                return await request_func(request_func_input=test_input, pbar=warmup_pbar)
+
+        warmup_tasks = []
+        for _ in range(num_warmups):
+            task = asyncio.create_task(warmup_limited_req_fn())
+            warmup_tasks.append(task)
+        _ = await asyncio.gather(*warmup_tasks)
+
+        if warmup_pbar is not None:
+            warmup_pbar.close()
+        print("Warmup completed.")
 
     if lora_modules:
         # For each input request, choose a LoRA module at random.
@@ -931,6 +999,7 @@ def main(args: argparse.Namespace):
             input_requests = [(prompt, prompt_len, output_len, None)
                               for prompt, prompt_formatted, prompt_len,
                               output_len, _ in input_requests]
+
         else:
             assert (
                 tokenizer.chat_template or tokenizer.default_chat_template
@@ -992,6 +1061,7 @@ def main(args: argparse.Namespace):
             request_rate=args.request_rate,
             burstiness=args.burstiness,
             disable_tqdm=args.disable_tqdm,
+            num_warmups=args.num_warmups,
             profile=args.profile,
             selected_percentile_metrics=args.percentile_metrics.split(","),
             selected_percentiles=[
@@ -1035,6 +1105,13 @@ def main(args: argparse.Namespace):
 
         # Merge with benchmark result
         result_json = {**result_json, **benchmark_result}
+
+        # Optionally exclude per-request data to reduce file size
+        if args.save_aggregated_only:
+            per_request_fields = ["input_lens", "output_lens", "ttfts", "itls",
+                                  "generated_texts", "errors"]
+            for field in per_request_fields:
+                result_json.pop(field, None)
 
         # Save to file
         base_model_id = model_id.split("/")[-1]
@@ -1184,6 +1261,13 @@ if __name__ == "__main__":
         "--save-result",
         action="store_true",
         help="Specify to save benchmark results to a json file",
+    )
+    parser.add_argument(
+        "--save-aggregated-only",
+        action="store_true",
+        help="When saving results, only include aggregated metrics and exclude "
+        "per-request data (input_lens, output_lens, ttfts, itls, generated_texts, "
+        "errors). This significantly reduces output file size for large benchmarks.",
     )
     parser.add_argument(
         "--metadata",
@@ -1352,6 +1436,8 @@ if __name__ == "__main__":
                         help="A subset of LoRA module names passed in when "
                         "launching the server. For each request, the "
                         "script chooses a LoRA module at random.")
+
+    parser.add_argument('--num-warmups', type=int, default=0)
 
     args = parser.parse_args()
     main(args)
