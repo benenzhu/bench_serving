@@ -385,8 +385,8 @@ def sample_random_requests(
         input_len = input_len - chat_template_len
 
     def sample_uniform(seq_len):
-        lower = int(seq_len * (1.0 - range_ratio))
-        upper = int(seq_len * (1.0 + range_ratio))
+        lower = int(seq_len * range_ratio)
+        upper = seq_len
         seq_lens = np.random.randint(lower, upper+1, size=num_prompts).tolist()
         return seq_lens
 
@@ -643,29 +643,6 @@ async def benchmark(
         ignore_eos=ignore_eos,
     )
 
-    # Take from vLLM ready_checker.py
-    # https://github.com/vllm-project/vllm/blob/e6ba2000aef3e61ca84bb114472badecbd533ee9/vllm/benchmarks/lib/ready_checker.py#L14
-    import aiohttp
-    timeout = 600
-    delay = 5
-    print(f"Waiting for endpoint to startup in {timeout} seconds")
-    for t in tqdm(range(timeout)):
-        if t % delay == 0:
-            try:
-                test_output = await request_func(request_func_input=test_input)
-                if test_output.success:
-                    break
-            except aiohttp.ClientConnectorError:
-                pass
-            await asyncio.sleep(delay)
-    else:
-        test_output = await request_func(request_func_input=test_input)
-        raise ValueError(
-            "Initial test run failed - Please make sure benchmark arguments "
-            f"are correctly specified. Error: {test_output.error}"
-        )
-    print("Initial test run completed. Starting main benchmark run...")
-
     if num_warmups > 0:
         print(f"Warming up with {num_warmups} requests...")
         warmup_pbar = None if disable_tqdm else tqdm(total=num_warmups)
@@ -731,6 +708,8 @@ async def benchmark(
         async with semaphore:
             return await request_func(request_func_input=request_func_input,
                                       pbar=pbar)
+
+    print("Starting main benchmark run...")
 
     benchmark_start_time = time.perf_counter()
     tasks: List[asyncio.Task] = []
