@@ -38,11 +38,8 @@ from datetime import datetime
 from typing import Any, AsyncGenerator, Collection, Dict, List, Optional, Tuple
 
 import numpy as np
-import pandas as pd
 from backend_request_func import (ASYNC_REQUEST_FUNCS, RequestFuncInput,
                                   RequestFuncOutput)
-from datasets import load_dataset
-from PIL.Image import Image
 from tqdm.asyncio import tqdm
 from transformers import PreTrainedTokenizerBase
 
@@ -91,278 +88,6 @@ class BenchmarkMetrics:
     percentiles_e2el_ms: List[Tuple[float, float]]
 
 
-def sample_sharegpt_requests(
-    dataset_path: str,
-    num_requests: int,
-    tokenizer: PreTrainedTokenizerBase,
-    fixed_output_len: Optional[int] = None,
-) -> List[Tuple[str, int, int, None]]:
-    # Load the dataset.
-    with open(dataset_path, encoding='utf-8') as f:
-        dataset = json.load(f)
-    # Filter out the conversations with less than 2 turns.
-    dataset = [data for data in dataset if len(data["conversations"]) >= 2]
-    # Only keep the first two turns of each conversation.
-    dataset = [(data["conversations"][0]["value"],
-                data["conversations"][1]["value"]) for data in dataset]
-
-    # Shuffle the dataset.
-    random.shuffle(dataset)
-
-    # Filter out sequences that are too long or too short
-    filtered_dataset: List[Tuple[str, int, int]] = []
-    for i in range(len(dataset)):
-        if len(filtered_dataset) == num_requests:
-            break
-
-        # Tokenize the prompts and completions.
-        prompt = dataset[i][0]
-        prompt_token_ids = tokenizer(prompt).input_ids
-        completion = dataset[i][1]
-        completion_token_ids = tokenizer(completion).input_ids
-        prompt_len = len(prompt_token_ids)
-        output_len = len(completion_token_ids
-                         ) if fixed_output_len is None else fixed_output_len
-        if prompt_len < 4 or (fixed_output_len is None and output_len < 4):
-            # Prune too short sequences.
-            continue
-        if prompt_len > 1024 or prompt_len + output_len > 2048:
-            # Prune too long sequences.
-            continue
-        filtered_dataset.append((prompt, prompt_len, output_len, None))
-
-    return filtered_dataset
-
-
-def sample_burstgpt_requests(
-    dataset_path: str,
-    num_requests: int,
-    random_seed: int,
-    tokenizer: PreTrainedTokenizerBase,
-) -> List[Tuple[str, int, int, None]]:
-    df = pd.read_csv(dataset_path)
-    gpt4_df = df[df["Model"] == "GPT-4"]
-    # Remove the failed requests (i.e., response length is 0)
-    gpt4_df = gpt4_df[gpt4_df["Response tokens"] > 0]
-    # Randomly sample num_requests from the dataset
-    if num_requests <= len(gpt4_df):
-        gpt4_df = gpt4_df.sample(n=num_requests, random_state=random_seed)
-    else:
-        gpt4_df = gpt4_df.sample(n=num_requests,
-                                 random_state=random_seed,
-                                 replace=True)
-    # Convert the dataframe to a list of tuples
-    dataset = gpt4_df.values.tolist()
-    input_requests = []
-    for i in range(num_requests):
-        input_len = int(dataset[i][2])
-        output_len = int(dataset[i][3])
-        prompt = tokenizer.decode([(i + j) % tokenizer.vocab_size
-                                   for j in range(input_len)])
-        input_requests.append((prompt, input_len, output_len, None))
-    return input_requests
-
-
-def sample_sonnet_requests(
-    dataset_path: str,
-    num_requests: int,
-    input_len: int,
-    output_len: int,
-    prefix_len: int,
-    tokenizer: PreTrainedTokenizerBase,
-) -> List[Tuple[str, str, int, int, None]]:
-    assert (
-        input_len > prefix_len
-    ), "'args.sonnet-input-len' must be greater than 'args.prefix-input-len'."
-
-    # Load the dataset.
-    with open(dataset_path, encoding='utf-8') as f:
-        poem_lines = f.readlines()
-
-    # Tokenize the poem lines.
-    poem_token_ids = tokenizer(poem_lines).input_ids
-    average_poem_len = sum(
-        len(token_ids) for token_ids in poem_token_ids) / len(poem_token_ids)
-
-    # Base prefix for all requests.
-    base_prompt = "Pick as many lines as you can from these poem lines:\n"
-    base_message = [{
-        "role": "user",
-        "content": base_prompt,
-    }]
-    base_prompt_formatted = tokenizer.apply_chat_template(
-        base_message, add_generation_prompt=True, tokenize=False)
-    base_prompt_offset = len(tokenizer(base_prompt_formatted).input_ids)
-
-    assert (
-        input_len > base_prompt_offset
-    ), f"Please set 'args.sonnet-input-len' higher than {base_prompt_offset}."
-    num_input_lines = round(
-        (input_len - base_prompt_offset) / average_poem_len)
-
-    # First approximately `prefix_len` number of tokens in the
-    # prompt are fixed poem lines.
-    assert (
-        prefix_len > base_prompt_offset
-    ), f"Please set 'args.sonnet-prefix-len' higher than {base_prompt_offset}."
-
-    num_prefix_lines = round(
-        (prefix_len - base_prompt_offset) / average_poem_len)
-    prefix_lines = poem_lines[:num_prefix_lines]
-
-    # Sample the rest of lines per request.
-    sampled_requests: List[Tuple[str, int, int]] = []
-    for _ in range(num_requests):
-        num_lines_needed = num_input_lines - num_prefix_lines
-        sampled_lines = "".join(prefix_lines +
-                                random.choices(poem_lines, k=num_lines_needed))
-
-        prompt = f"{base_prompt}{sampled_lines}"
-        message = [
-            {
-                "role": "user",
-                "content": prompt,
-            },
-        ]
-        prompt_formatted = tokenizer.apply_chat_template(
-            message, add_generation_prompt=True, tokenize=False)
-        prompt_len = len(tokenizer(prompt_formatted).input_ids)
-        sampled_requests.append(
-            (prompt, prompt_formatted, prompt_len, output_len, None))
-
-    return sampled_requests
-
-
-def sample_vision_arena_requests(
-    dataset,
-    num_requests: int,
-    tokenizer: PreTrainedTokenizerBase,
-    fixed_output_len: Optional[int] = None,
-) -> List[Tuple[str, str, int, Optional[Dict[str, Collection[str]]]]]:
-    sampled_requests: List[Tuple[str, int, int, Dict[str,
-                                                     Collection[str]]]] = []
-    for data in dataset:
-        if len(sampled_requests) == num_requests:
-            break
-
-        prompt = data["turns"][0][0]['content']
-
-        prompt_token_ids = tokenizer(prompt).input_ids
-        if fixed_output_len is None:
-            # Default max output len is set to 128
-            print("--hf-output-len is not provided. Using default value 128.")
-            fixed_output_len = 128
-
-        prompt_len = len(prompt_token_ids)
-        output_len = fixed_output_len
-
-        assert isinstance(
-            data["images"][0],
-            Image), ("Input image format must be `PIL.Image.Image`, "
-                     f"given {type(data['image'])}.")
-        image: Image = data["images"][0]
-        image = image.convert("RGB")
-        image_data = io.BytesIO()
-        image.save(image_data, format='JPEG')
-        image_base64 = base64.b64encode(image_data.getvalue()).decode("utf-8")
-        mm_content = {
-            "type": "image_url",
-            "image_url": {
-                "url": f"data:image/jpeg;base64,{image_base64}"
-            },
-        }
-
-        sampled_requests.append((prompt, prompt_len, output_len, mm_content))
-
-    return sampled_requests
-
-
-def sample_hf_requests(
-    dataset_path: str,
-    dataset_subset: Optional[str],
-    dataset_split: str,
-    num_requests: int,
-    tokenizer: PreTrainedTokenizerBase,
-    random_seed: int,
-    fixed_output_len: Optional[int] = None,
-) -> List[Tuple[str, str, int, Optional[Dict[str, Collection[str]]]]]:
-
-    # Special case for vision_arena dataset
-    if dataset_path == 'lmarena-ai/vision-arena-bench-v0.1' \
-        and dataset_subset is None:
-        assert dataset_split == "train"
-        dataset = load_dataset(dataset_path,
-                               name=dataset_subset,
-                               split=dataset_split,
-                               streaming=True)
-        dataset = dataset.shuffle(seed=random_seed)
-        return sample_vision_arena_requests(dataset, num_requests, tokenizer,
-                                            fixed_output_len)
-
-    dataset = load_dataset(dataset_path,
-                           name=dataset_subset,
-                           split=dataset_split,
-                           streaming=True)
-    assert "conversations" in dataset.features, (
-        "HF Dataset must have 'conversations' column.")
-    filter_func = lambda x: len(x["conversations"]) >= 2
-    filtered_dataset = dataset.shuffle(seed=random_seed).filter(filter_func)
-    sampled_requests: List[Tuple[str, int, int, Dict[str,
-                                                     Collection[str]]]] = []
-    for data in filtered_dataset:
-        if len(sampled_requests) == num_requests:
-            break
-
-        # Tokenize the prompts and completions.
-        prompt = data["conversations"][0]["value"]
-        prompt_token_ids = tokenizer(prompt).input_ids
-        completion = data["conversations"][1]["value"]
-        completion_token_ids = tokenizer(completion).input_ids
-        prompt_len = len(prompt_token_ids)
-        output_len = len(completion_token_ids
-                         ) if fixed_output_len is None else fixed_output_len
-        if fixed_output_len is None and (prompt_len < 4 or output_len < 4):
-            # Prune too short sequences.
-            continue
-        if fixed_output_len is None and \
-            (prompt_len > 1024 or prompt_len + output_len > 2048):
-            # Prune too long sequences.
-            continue
-
-        if "image" in data and isinstance(data["image"], Image):
-            image: Image = data["image"]
-            image = image.convert("RGB")
-            image_data = io.BytesIO()
-            image.save(image_data, format='JPEG')
-            image_base64 = base64.b64encode(
-                image_data.getvalue()).decode("utf-8")
-            mm_content = {
-                "type": "image_url",
-                "image_url": {
-                    "url": f"data:image/jpeg;base64,{image_base64}"
-                },
-            }
-        elif "image" in data and isinstance(data["image"], str):
-            if (data["image"].startswith("http://") or \
-                data["image"].startswith("file://")):
-                image_url = data["image"]
-            else:
-                image_url = f"file://{data['image']}"
-
-            mm_content = {
-                "type": "image_url",
-                "image_url": {
-                    "url": image_url
-                },
-            }
-        else:
-            mm_content = None
-
-        sampled_requests.append((prompt, prompt_len, output_len, mm_content))
-
-    return sampled_requests
-
-
 def sample_random_requests(
     prefix_len: int,
     input_len: int,
@@ -371,7 +96,7 @@ def sample_random_requests(
     range_ratio: float,
     tokenizer: PreTrainedTokenizerBase,
     use_chat_template: bool = False,
-) -> List[Tuple[str, int, int]]:    
+) -> List[Tuple[str, int, int]]:
     prefix_token_ids = np.random.randint(0, tokenizer.vocab_size, size=prefix_len).tolist()
 
     if use_chat_template:
@@ -385,20 +110,13 @@ def sample_random_requests(
         input_len = input_len - chat_template_len
 
     def sample_uniform(seq_len):
-        lower = int(seq_len * (1.0 - range_ratio))
-        upper = int(seq_len * (1.0 + range_ratio))
+        lower = int(seq_len * range_ratio)
+        upper = seq_len
         seq_lens = np.random.randint(lower, upper+1, size=num_prompts).tolist()
         return seq_lens
 
     input_lens = sample_uniform(input_len)
     output_lens = sample_uniform(output_len)
-
-    # Make the first request have maximum possible length to ensure the benchmark
-    # fails early if max_model_len is set too low
-    max_input_len = int(input_len * (1.0 + range_ratio + 0.02))
-    max_output_len = int(output_len * (1.0 + range_ratio + 0.02))
-    input_lens[0] = max_input_len
-    output_lens[0] = max_output_len
     offsets = np.random.randint(0, tokenizer.vocab_size, size=num_prompts)
 
     input_requests = []
@@ -630,9 +348,9 @@ async def benchmark(
     else:
         raise ValueError(f"Unknown backend: {backend}")
 
+    print("Starting initial single prompt test run...")
     test_prompt, test_prompt_len, test_output_len, test_mm_content = (
         input_requests[0])
-    print(f"Starting initial single prompt test run (input length {test_prompt_len}, output length {test_output_len})...")
     if backend != "openai-chat" and test_mm_content is not None:
         # multi-modal benchmark is only available on OpenAI Chat backend.
         raise ValueError(
@@ -649,30 +367,6 @@ async def benchmark(
         multi_modal_content=test_mm_content,
         ignore_eos=ignore_eos,
     )
-    
-
-    # Take from vLLM ready_checker.py
-    # https://github.com/vllm-project/vllm/blob/e6ba2000aef3e61ca84bb114472badecbd533ee9/vllm/benchmarks/lib/ready_checker.py#L14
-    import aiohttp
-    timeout = 600
-    delay = 5
-    print(f"Waiting for endpoint to startup in {timeout} seconds")
-    for t in tqdm(range(timeout)):
-        if t % delay == 0:
-            try:
-                test_output = await request_func(request_func_input=test_input)
-                if test_output.success:
-                    break
-            except aiohttp.ClientConnectorError as e:
-                pass
-            await asyncio.sleep(delay)
-    else:
-        test_output = await request_func(request_func_input=test_input)
-        raise ValueError(
-            "Initial test run failed - Please make sure benchmark arguments "
-            f"are correctly specified. Error: {test_output.error}"
-        )
-    print("Initial test run completed. Starting main benchmark run...")
 
     if num_warmups > 0:
         print(f"Warming up with {num_warmups} requests...")
@@ -739,6 +433,8 @@ async def benchmark(
         async with semaphore:
             return await request_func(request_func_input=request_func_input,
                                       pbar=pbar)
+
+    print("Starting main benchmark run...")
 
     benchmark_start_time = time.perf_counter()
     tasks: List[asyncio.Task] = []
@@ -956,78 +652,8 @@ def main(args: argparse.Namespace):
                               tokenizer_mode=tokenizer_mode,
                               trust_remote_code=args.trust_remote_code)
 
-    if args.dataset is not None:
-        warnings.warn(
-            "The '--dataset' argument will be deprecated in the next "
-            "release. Please use '--dataset-name' and "
-            "'--dataset-path' in the future runs.",
-            stacklevel=2)
-        input_requests = sample_sharegpt_requests(
-            dataset_path=args.dataset,
-            num_requests=args.num_prompts,
-            tokenizer=tokenizer,
-            fixed_output_len=args.sharegpt_output_len,
-        )
 
-    elif args.dataset_name == "sharegpt":
-        input_requests = sample_sharegpt_requests(
-            dataset_path=args.dataset_path,
-            num_requests=args.num_prompts,
-            tokenizer=tokenizer,
-            fixed_output_len=args.sharegpt_output_len,
-        )
-
-    elif args.dataset_name == "burstgpt":
-        input_requests = sample_burstgpt_requests(
-            dataset_path=args.dataset_path,
-            num_requests=args.num_prompts,
-            random_seed=args.seed,
-            tokenizer=tokenizer,
-        )
-
-    elif args.dataset_name == "sonnet":
-        # Do not format the prompt, pass to message directly
-        if args.backend == "openai-chat":
-            input_requests = sample_sonnet_requests(
-                dataset_path=args.dataset_path,
-                num_requests=args.num_prompts,
-                input_len=args.sonnet_input_len,
-                output_len=args.sonnet_output_len,
-                prefix_len=args.sonnet_prefix_len,
-                tokenizer=tokenizer,
-            )
-            input_requests = [(prompt, prompt_len, output_len, None)
-                              for prompt, prompt_formatted, prompt_len,
-                              output_len, _ in input_requests]
-
-        else:
-            assert (
-                tokenizer.chat_template or tokenizer.default_chat_template
-            ), "Tokenizer/model must have chat template for sonnet dataset."
-            input_requests = sample_sonnet_requests(
-                dataset_path=args.dataset_path,
-                num_requests=args.num_prompts,
-                input_len=args.sonnet_input_len,
-                output_len=args.sonnet_output_len,
-                prefix_len=args.sonnet_prefix_len,
-                tokenizer=tokenizer,
-            )
-            input_requests = [(prompt_formatted, prompt_len, output_len, None)
-                              for prompt, prompt_formatted, prompt_len,
-                              output_len, _ in input_requests]
-
-    elif args.dataset_name == "hf":
-        input_requests = sample_hf_requests(
-            dataset_path=args.dataset_path,
-            dataset_subset=args.hf_subset,
-            dataset_split=args.hf_split,
-            num_requests=args.num_prompts,
-            tokenizer=tokenizer,
-            random_seed=args.seed,
-            fixed_output_len=args.hf_output_len,
-        )
-
-    elif args.dataset_name == "random":
+    if args.dataset_name == "random":
         input_requests = sample_random_requests(
             prefix_len=args.random_prefix_len,
             input_len=args.random_input_len,
@@ -1105,13 +731,21 @@ def main(args: argparse.Namespace):
 
         # Merge with benchmark result
         result_json = {**result_json, **benchmark_result}
-
-        # Optionally exclude per-request data to reduce file size
-        if args.save_aggregated_only:
-            per_request_fields = ["input_lens", "output_lens", "ttfts", "itls",
-                                  "generated_texts", "errors"]
-            for field in per_request_fields:
-                result_json.pop(field, None)
+        
+        if not args.save_detailed:
+            # Remove fields with too many data points
+            for field in [
+                "input_lens",
+                "output_lens",
+                "ttfts",
+                "itls",
+                "generated_texts",
+                "errors",
+            ]:
+                if field in result_json:
+                    del result_json[field]
+                if field in benchmark_result:
+                    del benchmark_result[field]
 
         # Save to file
         base_model_id = model_id.split("/")[-1]
@@ -1152,17 +786,10 @@ if __name__ == "__main__":
         help="API endpoint.",
     )
     parser.add_argument(
-        "--dataset",
-        type=str,
-        default=None,
-        help="Path to the ShareGPT dataset, will be deprecated in the "
-        "next release.",
-    )
-    parser.add_argument(
         "--dataset-name",
         type=str,
         default="sharegpt",
-        choices=["sharegpt", "burstgpt", "sonnet", "random", "hf"],
+        choices=["random"],
         help="Name of the dataset to benchmark on.",
     )
     parser.add_argument("--dataset-path",
@@ -1263,11 +890,12 @@ if __name__ == "__main__":
         help="Specify to save benchmark results to a json file",
     )
     parser.add_argument(
-        "--save-aggregated-only",
+        "--save-detailed",
         action="store_true",
-        help="When saving results, only include aggregated metrics and exclude "
-        "per-request data (input_lens, output_lens, ttfts, itls, generated_texts, "
-        "errors). This significantly reduces output file size for large benchmarks.",
+        default=False,
+        help="When saving results, include detailed per-request data "
+        "(input_lens, output_lens, ttfts, itls, generated_texts, errors). "
+        "By default, only aggregated metrics are saved to reduce file size.",
     )
     parser.add_argument(
         "--metadata",
