@@ -744,6 +744,9 @@ async def benchmark(
     print("{:<40} {:<10.2f}".format("Total Token throughput (tok/s):",
                                     metrics.total_token_throughput))
 
+    print("{:<40} {:<10.2f}".format("single gpu throughput (tok/s):",
+                                    metrics.total_token_throughput/int(os.environ.get("TP","8"))))
+
     result = {
         "duration": benchmark_duration,
         "completed": metrics.completed,
@@ -781,6 +784,8 @@ async def benchmark(
         print("{:<40} {:<10.2f}".format(
             f"Median {metric_name} (ms):",
             getattr(metrics, f"median_{metric_attribute_name}_ms")))
+        if metric_name == "TPOT":
+            print("{:<40} {:<10.2f}".format( f"Tokens/sec {metric_name} (ms):", 1000/getattr(metrics, f"median_{metric_attribute_name}_ms")))
         result[f"mean_{metric_attribute_name}_ms"] = getattr(
             metrics, f"mean_{metric_attribute_name}_ms")
         result[f"median_{metric_attribute_name}_ms"] = getattr(
