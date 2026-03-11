@@ -3,7 +3,7 @@
 # Example: bash bench.sh 256 32  => tests 256 128 64 32
 
 export MODEL="MiniMaxAI/MiniMax-M2.5"
-export ISL=1024
+export ISL=8192
 export OSL=1024
 export RANDOM_RANGE_RATIO=0.8
 export RESULT_FILENAME="dsr1_fp8_mi300x_docker.json"
