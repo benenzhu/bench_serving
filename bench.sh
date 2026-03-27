@@ -1,6 +1,7 @@
 #!/bin/bash
-# Usage: bash bench.sh <CONC_START> <CONC_END>
-# Example: bash bench.sh 256 32  => tests 256 128 64 32
+# Usage: bash bench.sh <CONC_END> [CONC_START]
+# Example: bash bench.sh 256     => tests 4 8 16 32 64 128 256
+# Example: bash bench.sh 256 8   => tests 8 16 32 64 128 256
 
 export MODEL="MiniMaxAI/MiniMax-M2.5"
 export ISL=8192
@@ -10,8 +11,8 @@ export RESULT_FILENAME="dsr1_fp8_mi300x_docker.json"
 export port=30000
 export TP=8
 
-CONC_START=${1:?Usage: bash bench.sh <CONC_START> <CONC_END>}
-CONC_END=${2:?Usage: bash bench.sh <CONC_START> <CONC_END>}
+CONC_END=${1:?Usage: bash bench.sh <CONC_END> [CONC_START]}
+CONC_START=${2:-4}
 
 set -x
 cd /A
@@ -22,7 +23,7 @@ done
 
 
 CONC=$CONC_START
-while [ "$CONC" -ge "$CONC_END" ]; do
+while [ "$CONC" -le "$CONC_END" ]; do
     echo "========== Testing CONC=$CONC =========="
     python3 benchmark_serving.py \
         --model "$MODEL" \
@@ -41,5 +42,5 @@ while [ "$CONC" -ge "$CONC_END" ]; do
         --result-dir "/app/" \
         --result-filename "$RESULT_FILENAME.json" \
         2>&1 | tee "result_${CONC}_$(date +%Y%m%d_%H%M%S).log"
-    CONC=$((CONC / 2))
+    CONC=$((CONC * 2))
 done

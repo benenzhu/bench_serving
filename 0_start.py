@@ -28,7 +28,7 @@ def serve(
     max_model_len: int = typer.Option(10240, "--max-model-len", help="Max model length"),
     max_num_seqs: int = typer.Option(512, "--max-num-seqs", help="Max number of sequences"),
     # max_num_batched_tokens: int = typer.Option(196608, "--max-num-batched-tokens", help="Max batched tokens"),
-    gpu_mem_util: float = typer.Option(0.8, "--gpu-mem-util", help="GPU memory utilization"),
+    gpu_mem_util: float = typer.Option(0.95, "--gpu-mem-util", help="GPU memory utilization"),
     profile: bool = typer.Option(True, "--profile", help="Enable torch profiler"),
     log_file: str = typer.Option("server.log", "--log-file", "-l", help="Server log file"),
 ):
