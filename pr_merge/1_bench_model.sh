@@ -1,0 +1,11 @@
+vllm bench serve \
+  --model MiniMaxAI/MiniMax-M2.5 \
+  --dataset-name sharegpt \
+  --dataset-path /A/datasets/ShareGPT_V3_unfiltered_cleaned_split.json \
+  --sharegpt-output-len 300 \
+  --port 30000 \
+  --max-concurrency 8 \
+  --num-prompts 1000 \
+  --num-warmups 50 \
+  --ignore-eos \
+  --temperature 0
