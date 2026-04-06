@@ -15,7 +15,6 @@ CONC_END=${1:?Usage: bash bench.sh <CONC_END> [CONC_START]}
 CONC_START=${2:-4}
 
 set -x
-cd /A
 
 until curl --output /dev/null --silent --fail http://0.0.0.0:$port/health; do
     sleep 3
@@ -33,7 +32,7 @@ while [ "$CONC" -le "$CONC_END" ]; do
         --random-input-len "$ISL" \
         --random-output-len "$OSL" \
         --random-range-ratio "$RANDOM_RANGE_RATIO" \
-        --num-prompts $(( CONC * 4 )) \
+        --num-prompts $(( CONC * 3 )) \
         --max-concurrency "$CONC" \
         --request-rate inf \
         --ignore-eos \
