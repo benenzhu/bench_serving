@@ -26,7 +26,7 @@ def serve(
     ep: bool = typer.Option(..., "--ep / --no-ep", help="Enable expert parallel"),
     port: int = typer.Option(30000, "--port", "-p", help="Server port"),
     max_model_len: int = typer.Option(10240, "--max-model-len", help="Max model length"),
-    max_num_seqs: int = typer.Option(512, "--max-num-seqs", help="Max number of sequences"),
+    max_num_seqs: int = typer.Option(2048, "--max-num-seqs", help="Max number of sequences"),
     # max_num_batched_tokens: int = typer.Option(196608, "--max-num-batched-tokens", help="Max batched tokens"),
     gpu_mem_util: float = typer.Option(0.95, "--gpu-mem-util", help="GPU memory utilization"),
     profile: bool = typer.Option(True, "--profile", help="Enable torch profiler"),
@@ -46,9 +46,11 @@ def serve(
         "--tensor-parallel-size", str(tp),
         "--gpu-memory-utilization", str(gpu_mem_util),
         "--max-num-seqs", str(max_num_seqs),
+  "--attention-backend" ,"ROCM_AITER_FA",
         # "--max-num-batched-tokens", str(max_num_batched_tokens),
         "--max-model-len", str(max_model_len),
         "--block-size", "32",
+        "--no-enable-prefix-caching" ,
         "--trust-remote-code",
     ]
 
