@@ -9,7 +9,7 @@ app = typer.Typer()
 
 def kill_existing_vllm():
     result = subprocess.run(
-        ["pgrep", "-f", "vllm"], capture_output=True, text=True
+        ["pgrep", "-f", "VLLM"], capture_output=True, text=True
     )
     for pid in result.stdout.strip().split("\n"):
         if pid:
@@ -50,6 +50,7 @@ def serve(
         # "--max-num-batched-tokens", str(max_num_batched_tokens),
         "--max-model-len", str(max_model_len),
         "--block-size", "32",
+        "--kv-cache-dtype", "fp8",
         "--no-enable-prefix-caching" ,
         "--trust-remote-code",
     ]
