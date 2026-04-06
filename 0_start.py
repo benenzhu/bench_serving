@@ -25,7 +25,7 @@ def serve(
     tp: int = typer.Option(..., "--tp", help="Tensor parallel size"),
     ep: bool = typer.Option(..., "--ep / --no-ep", help="Enable expert parallel"),
     port: int = typer.Option(30000, "--port", "-p", help="Server port"),
-    max_model_len: int = typer.Option(10240, "--max-model-len", help="Max model length"),
+    max_model_len: int = typer.Option(9416, "--max-model-len", help="Max model length"),
     max_num_seqs: int = typer.Option(2048, "--max-num-seqs", help="Max number of sequences"),
     # max_num_batched_tokens: int = typer.Option(196608, "--max-num-batched-tokens", help="Max batched tokens"),
     gpu_mem_util: float = typer.Option(0.95, "--gpu-mem-util", help="GPU memory utilization"),
