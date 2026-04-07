@@ -36,8 +36,9 @@ def serve(
 
     os.environ.update({
         "VLLM_ROCM_USE_AITER": "1",
-        "SGLANG_TORCH_PROFILER_DIR": "/app",
-        "SGLANG_USE_AITER": "1",
+        "VLLM_ROCM_QUICK_REDUCE_QUANTIZATION": "INT4"
+#        "SGLANG_TORCH_PROFILER_DIR": "/app",
+#        "SGLANG_USE_AITER": "1",
     })
 
     cmd = [
@@ -46,18 +47,19 @@ def serve(
         "--tensor-parallel-size", str(tp),
         "--gpu-memory-utilization", str(gpu_mem_util),
         "--max-num-seqs", str(max_num_seqs),
-  "--attention-backend" ,"ROCM_AITER_FA",
         # "--max-num-batched-tokens", str(max_num_batched_tokens),
         "--max-model-len", str(max_model_len),
         "--block-size", "32",
         "--kv-cache-dtype", "fp8",
         "--no-enable-prefix-caching" ,
+        "--attention-backend" ,"ROCM_AITER_FA",
         "--trust-remote-code",
     ]
 
     if ep:
         cmd.append("--enable-expert-parallel")
 
+    """
     cmd.extend([
         "--profiler-config.profiler", "torch",
         "--profiler-config.torch_profiler_dir", "/mnt/hf_hub_cache",
@@ -67,7 +69,7 @@ def serve(
         "--profiler-config.max_iterations", "3",
         "--profiler-config.ignore_frontend", "true",
     ])
-
+"""
     typer.echo(f"Running: {' '.join(cmd)}")
     typer.echo(f"Logging to: {log_file}")
 
