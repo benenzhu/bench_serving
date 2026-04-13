@@ -7,9 +7,9 @@ import typer
 app = typer.Typer()
 
 
-def kill_existing_vllm():
+def kill_existing_atom():
     result = subprocess.run(
-        ["pgrep", "-f", "VLLM"], capture_output=True, text=True
+        ["pgrep", "-f", "atom.entrypoints"], capture_output=True, text=True
     )
     for pid in result.stdout.strip().split("\n"):
         if pid:
@@ -25,52 +25,39 @@ def serve(
     tp: int = typer.Option(..., "--tp", help="Tensor parallel size"),
     ep: bool = typer.Option(..., "--ep / --no-ep", help="Enable expert parallel"),
     port: int = typer.Option(30000, "--port", "-p", help="Server port"),
-    max_model_len: int = typer.Option(9416, "--max-model-len", help="Max model length"),
-    max_num_seqs: int = typer.Option(2048, "--max-num-seqs", help="Max number of sequences"),
-    # max_num_batched_tokens: int = typer.Option(196608, "--max-num-batched-tokens", help="Max batched tokens"),
-    gpu_mem_util: float = typer.Option(0.95, "--gpu-mem-util", help="GPU memory utilization"),
-    profile: bool = typer.Option(True, "--profile", help="Enable torch profiler"),
+    max_model_len: int = typer.Option(10240, "--max-model-len", help="Max model length"),
+    kv_cache_dtype: str = typer.Option("fp8", "--kv-cache-dtype", help="KV cache dtype: bf16 or fp8"),
+    gpu_mem_util: float = typer.Option(0.9, "--gpu-mem-util", help="GPU memory utilization"),
+    gpus: str = typer.Option(None, "--gpus", help="Comma-separated GPU IDs, e.g. '6,7'. Uses all if not set."),
     log_file: str = typer.Option("server.log", "--log-file", "-l", help="Server log file"),
 ):
-    kill_existing_vllm()
+    kill_existing_atom()
 
     os.environ.update({
         "VLLM_ROCM_USE_AITER": "1",
-        "VLLM_ROCM_QUICK_REDUCE_QUANTIZATION": "INT4"
-#        "SGLANG_TORCH_PROFILER_DIR": "/app",
-#        "SGLANG_USE_AITER": "1",
+        "OMP_NUM_THREADS": "1",
     })
 
+    if gpus:
+        # CUDA_VISIBLE_DEVICES works on ROCm; ROCR_VISIBLE_DEVICES breaks aiter triton JIT
+        os.environ["CUDA_VISIBLE_DEVICES"] = gpus
+
     cmd = [
-        "vllm", "serve", model,
-        "--port", str(port),
-        "--tensor-parallel-size", str(tp),
+        "python3", "-m", "atom.entrypoints.openai_server",
+        "--model", model,
+        "--server-port", str(port),
+        "-tp", str(tp),
+        "--kv_cache_dtype", kv_cache_dtype,
         "--gpu-memory-utilization", str(gpu_mem_util),
-        "--max-num-seqs", str(max_num_seqs),
-        # "--max-num-batched-tokens", str(max_num_batched_tokens),
         "--max-model-len", str(max_model_len),
-        "--block-size", "32",
-        "--kv-cache-dtype", "fp8",
-        "--no-enable-prefix-caching" ,
-        "--attention-backend" ,"ROCM_AITER_FA",
         "--trust-remote-code",
     ]
 
     if ep:
         cmd.append("--enable-expert-parallel")
 
-    """
-    cmd.extend([
-        "--profiler-config.profiler", "torch",
-        "--profiler-config.torch_profiler_dir", "/mnt/hf_hub_cache",
-        "--profiler-config.torch_profiler_record_shapes", "true",
-        "--profiler-config.torch_profiler_with_stack", "true",
-        "--profiler-config.delay_iterations", "5",
-        "--profiler-config.max_iterations", "3",
-        "--profiler-config.ignore_frontend", "true",
-    ])
-"""
     typer.echo(f"Running: {' '.join(cmd)}")
+    typer.echo(f"GPUs: {gpus or 'all'}")
     typer.echo(f"Logging to: {log_file}")
 
     with open(log_file, "w") as f:
@@ -79,6 +66,7 @@ def serve(
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
+            cwd="/app/ATOM",
         )
         try:
             for line in proc.stdout:
