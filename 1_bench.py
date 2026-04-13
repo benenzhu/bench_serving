@@ -76,7 +76,7 @@ def bench(
         typer.echo(f"========== Testing CONC={conc} ==========")
 
         cmd = (
-            f"cd /A && python3 benchmark_serving.py"
+            f"python3 benchmark_serving.py"
             f" --model {shlex.quote(model)}"
             f" --backend vllm"
             f" --base-url http://0.0.0.0:{port}"
