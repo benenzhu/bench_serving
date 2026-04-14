@@ -405,8 +405,6 @@ async def benchmark(
                                          multi_modal_content=test_mm_content,
                                          ignore_eos=ignore_eos)
         profile_output = await request_func(request_func_input=profile_input)
-        if profile_output.success:
-            print("Profiler started")
 
     if burstiness == 1.0:
         distribution = "Poisson process"
