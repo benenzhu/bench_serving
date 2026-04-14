@@ -39,6 +39,7 @@ def bench(
     result_filename: str = typer.Option("dsr1_fp8_mi300x_docker", "--result-filename", "-r", help="Result filename prefix"),
     num_prompts_mul: int = typer.Option(4, "--num-prompts-mul", help="num_prompts = CONC * this value"),
     result_dir: str = typer.Option("/app/", "--result-dir", help="Result directory"),
+    profile: bool = typer.Option(False, "--profile", help="Enable torch profiler (start/stop via server API)"),
 ):
     # Build concurrency list
     conc_list = []
@@ -59,6 +60,7 @@ def bench(
     typer.echo(f"  num_prompts:        CONC * {num_prompts_mul}")
     typer.echo(f"  Result filename:    {result_filename}.json")
     typer.echo(f"  Result dir:         {result_dir}")
+    typer.echo(f"  Profile:            {profile}")
     typer.echo("=" * 50 + "\n")
 
     if not typer.confirm("Proceed?"):
@@ -92,8 +94,12 @@ def bench(
             f" --percentile-metrics ttft,tpot,itl,e2el"
             f" --result-dir {shlex.quote(result_dir)}"
             f" --result-filename {shlex.quote(result_filename + '.json')}"
-            f" 2>&1 | tee {shlex.quote(log_file)}"
         )
+
+        if profile:
+            cmd += " --profile"
+
+        cmd += f" 2>&1 | tee {shlex.quote(log_file)}"
 
         typer.echo(cmd)
         os.system(cmd)
