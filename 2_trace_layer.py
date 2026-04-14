@@ -119,12 +119,20 @@ def main(
         m = re.match(r"decode\[bs=(\d+)", ev.get("name", ""))
         if m:
             bs_counts[int(m.group(1))] += 1
+    dominant_bs = 0
     if bs_counts:
         dominant_bs = bs_counts.most_common(1)[0][0]
         typer.echo(f"Decode batch sizes: {dict(bs_counts.most_common())}")
         typer.echo(f"Dominant decode bs: {dominant_bs}")
     else:
         typer.echo("No decode annotations found in trace")
+
+    # Auto-generate CSV filename with conc{bs} prefix
+    if csv_out and dominant_bs:
+        csv_path = Path(csv_out)
+        csv_out = str(csv_path.parent / f"conc{dominant_bs}_{csv_path.name}")
+    elif not csv_out and dominant_bs:
+        csv_out = f"conc{dominant_bs}_layer.csv"
 
     layers, kernels_per_layer, total_kernels = extract_layers(trace_data, pa_pattern)
 
