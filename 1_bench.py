@@ -29,16 +29,16 @@ def wait_for_server(port: int):
 
 @app.command()
 def bench(
-    conc_end: int = typer.Option(..., "--conc-end", "-c", help="Max concurrency (e.g. 256)"),
-    conc_start: int = typer.Option(4, "--conc-start", "-s", help="Starting concurrency"),
+    conc_end: int = typer.Option(1, "--conc-end", "-c", help="Max concurrency (e.g. 256)"),
+    conc_start: int = typer.Option(1, "--conc-start", "-s", help="Starting concurrency"),
     isl: int = typer.Option(8192, "--isl", help="Random input sequence length"),
-    osl: int = typer.Option(1024, "--osl", help="Random output sequence length"),
+    osl: int = typer.Option(5, "--osl", help="Random output sequence length"),
     port: int = typer.Option(30000, "--port", "-p", help="Server port"),
     model: str = typer.Option("MiniMaxAI/MiniMax-M2.5", "--model", "-m", help="Model name"),
-    random_range_ratio: float = typer.Option(0.8, "--random-range-ratio", help="Random range ratio"),
+    random_range_ratio: float = typer.Option(1, "--random-range-ratio", help="Random range ratio"),
     result_filename: str = typer.Option("dsr1_fp8_mi300x_docker", "--result-filename", "-r", help="Result filename prefix"),
-    num_prompts_mul: int = typer.Option(4, "--num-prompts-mul", help="num_prompts = CONC * this value"),
-    result_dir: str = typer.Option("/app/", "--result-dir", help="Result directory"),
+    num_prompts_mul: int = typer.Option(2, "--num-prompts-mul", help="num_prompts = CONC * this value"),
+    result_dir: str = typer.Option("/root", "--result-dir", help="Result directory"),
     profile: bool = typer.Option(False, "--profile", help="Enable torch profiler (start/stop via server API)"),
 ):
     # Build concurrency list
