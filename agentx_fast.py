@@ -30,8 +30,9 @@ import time
 
 import numpy as np
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from backend_request_func import RequestFuncInput, async_request_openai_completions  # noqa: E402
+import aiohttp
+
+AIOHTTP_TIMEOUT = aiohttp.ClientTimeout(total=6 * 3600)
 
 PERCENTILES = (50, 90, 95, 99)
 
@@ -90,33 +91,75 @@ def make_sessions(args, profile):
     return sessions
 
 
-async def request(api_url, model, prompt_ids, max_tokens):
-    inp = RequestFuncInput(
-        prompt=prompt_ids,  # a token-id list: vLLM's completions endpoint takes it as is
-        api_url=api_url,
-        prompt_len=len(prompt_ids),
-        output_len=max_tokens,
-        model=model,
-        ignore_eos=True,
-    )
-    return await async_request_openai_completions(inp)
+class Out:
+    """The subset of benchmark_serving's RequestFuncOutput this bench uses."""
+
+    def __init__(self):
+        self.success, self.error, self.ttft, self.latency, self.output_tokens, self.itl = False, "", 0.0, 0.0, 0, []
 
 
-async def warm(sess, api_url, model):
+async def request(session, api_url, model, prompt_ids, max_tokens):
+    """One streaming /v1/completions request with a token-id prompt. Same TTFT / ITL / latency bookkeeping as
+    benchmark_serving's async_request_openai_completions, but the SSE stream is parsed from raw chunks: aiohttp's
+    line reader rejects a single event above 512 KB (seen once at conc 20)."""
+    payload = {"model": model, "prompt": prompt_ids, "temperature": 0.0, "max_tokens": max_tokens,
+               "ignore_eos": True, "stream": True, "stream_options": {"include_usage": True}}
+    out = Out()
+    st = time.perf_counter()
+    last = st
+    buf = b""
+    first = False
+    try:
+        async with session.post(api_url, json=payload) as resp:
+            if resp.status != 200:
+                out.error = f"HTTP {resp.status}: {(await resp.text())[:300]}"
+                return out
+            async for raw in resp.content.iter_any():
+                buf += raw
+                while b"\n" in buf:
+                    line, buf = buf.split(b"\n", 1)
+                    line = line.strip()
+                    if not line.startswith(b"data:"):
+                        continue
+                    body = line[5:].strip()
+                    if body == b"[DONE]":
+                        continue
+                    data = json.loads(body)
+                    now = time.perf_counter()
+                    if data.get("choices"):
+                        if not first:
+                            first, out.ttft = True, now - st
+                        else:
+                            out.itl.append(now - last)
+                        last = now
+                    elif data.get("usage"):
+                        out.output_tokens = data["usage"].get("completion_tokens", 0)
+        out.latency = last - st
+        out.success = first
+        if not first:
+            out.error = "no completion chunk received"
+    except Exception:  # noqa: BLE001
+        import traceback
+
+        out.error = traceback.format_exc()
+    return out
+
+
+async def warm(sess, http, api_url, model):
     t0 = time.perf_counter()
-    out = await request(api_url, model, sess["ids"][: sess["C"]], 1)
+    out = await request(http, api_url, model, sess["ids"][: sess["C"]], 1)
     return dict(session=sess["i"], context=sess["C"], ok=out.success, ttft_s=out.ttft,
                 latency_s=time.perf_counter() - t0, error=out.error)
 
 
-async def turns(sess, api_url, model, records, verbose):
+async def turns(sess, http, api_url, model, records, verbose):
     end = sess["C"]
     for k, (u, d) in enumerate(zip(sess["U"], sess["D"])):
         cached = end
         end += u
         prompt = sess["ids"][:end]
         t0 = time.perf_counter()
-        out = await request(api_url, model, prompt, d)
+        out = await request(http, api_url, model, prompt, d)
         rec = dict(session=sess["i"], turn=k, prompt_len=len(prompt), cached_len=cached, new_tokens=u,
                    max_tokens=d, output_tokens=out.output_tokens or 0, ok=out.success, ttft_ms=out.ttft * 1e3,
                    latency_ms=out.latency * 1e3, itl_ms=[x * 1e3 for x in out.itl], t_start=t0, error=out.error)
@@ -189,8 +232,9 @@ async def main_async(args):
               + ("  (WARNING: eviction likely)" if need > 0.8 * pool else ""))
     api_url = f"{args.base_url.rstrip('/')}/v1/completions"
     print(f"warm phase: {len(sessions)} sessions, {sum(s['C'] for s in sessions):,} context tokens", flush=True)
+    http = aiohttp.ClientSession(timeout=AIOHTTP_TIMEOUT, connector=aiohttp.TCPConnector(limit=0))
     t0 = time.perf_counter()
-    warm_recs = await asyncio.gather(*(warm(s, api_url, args.model) for s in sessions))
+    warm_recs = await asyncio.gather(*(warm(s, http, api_url, args.model) for s in sessions))
     t_warm = time.perf_counter() - t0
     bad = [w for w in warm_recs if not w["ok"]]
     if bad:
@@ -199,8 +243,9 @@ async def main_async(args):
     print(f"warm phase done in {t_warm:.1f} s; scored phase: {args.turns} turns per session", flush=True)
     records = []
     t1 = time.perf_counter()
-    await asyncio.gather(*(turns(s, api_url, args.model, records, args.verbose) for s in sessions))
+    await asyncio.gather(*(turns(s, http, api_url, args.model, records, args.verbose) for s in sessions))
     t_turns = time.perf_counter() - t1
+    await http.close()
     res = summarize(args, sessions, warm_recs, records, t_warm, t_turns)
     print_summary(res)
     if args.result_filename:
