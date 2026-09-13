@@ -39,3 +39,12 @@ Per-job table (cache hit rates, nominal and uncached ISL, OSL, TTFT) from the ra
 InferenceX agentic run, unpacked as `<root>/tp4_conc<N>/`. The uncached prompt tokens per request come from
 vLLM's per-second prefix-cache counters (exact in aggregate; the per-request split is approximate above
 conc ~8).
+
+## gsm8k sanity check (`run_gsm8k.sh`)
+
+lm-eval in a long-lived CPU-only docker container (never the host python), the InferenceX CI convention
+(`local-chat-completions`, chat template, `eval/ci/gsm8k_ci.yaml`, max_tokens 12288, reasoning_content fallback via
+`eval/ci/sitecustomize.py`), on a subset: `LIMIT=100 CONCURRENT=20 PORT=8888 OUT=c20 ./run_gsm8k.sh` prints
+flexible-extract / strict-match exact_match (M3 MXFP4 scores ~0.96 on the full set). The server must run
+speculative decoding **off or with real rejection sampling** — synthetic acceptance (the InferenceX perf recipe)
+accepts draft tokens at random and the score is meaningless.
