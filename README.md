@@ -22,6 +22,10 @@ python3 agentx_fast.py --base-url http://127.0.0.1:8888 --model <served name> --
     --conc 20 --turns 8 --seed 0 --result-dir out --result-filename agentx_fast_c20.json --verbose
 ```
 
+`run_agentx_fast.sh <conc> <turns> <tag>` runs it from the vLLM client image (env `MODEL`, `TOKENIZER`, `BASE_URL`,
+`CLI_IMG`, `MODELS_DIR`, `RESULT_DIR`, `SEED`); `agentx_fast_compare.py <result.json ...>` prints the runs next to the
+InferenceX numbers at the same concurrency.
+
 Output: benchmark_serving-style keys (`median_ttft_ms`, `p99_tpot_ms`, `output_throughput`, ...) plus every
 turn's record. With the server's `--stream-interval 20`, ITL is per 20-token chunk; use TPOT for per-token
 decode latency.
