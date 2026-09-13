@@ -159,7 +159,8 @@ async def main_async(args):
     api_url = base + "/v1/completions"
     http = aiohttp.ClientSession(timeout=AIOHTTP_TIMEOUT, connector=aiohttp.TCPConnector(limit=0))
     t0 = time.perf_counter()
-    print(f"warm phase: {len(sessions)} sessions, contexts {[f'{s['C'] // 1000}K' for s in sessions]}", flush=True)
+    ctxs = [f"{s['C'] // 1000}K" for s in sessions]
+    print(f"warm phase: {len(sessions)} sessions, contexts {ctxs}", flush=True)
     recs = await asyncio.gather(*(warm(s, http, api_url, args.model) for s in sessions))
     bad = [w for w in recs if not w["ok"]]
     if bad:
