@@ -40,11 +40,13 @@ InferenceX agentic run, unpacked as `<root>/tp4_conc<N>/`. The uncached prompt t
 vLLM's per-second prefix-cache counters (exact in aggregate; the per-request split is approximate above
 conc ~8).
 
-## gsm8k sanity check (`run_gsm8k.sh`)
+## gsm8k check on demand (`run_gsm8k.sh`)
 
 lm-eval in a long-lived CPU-only docker container (never the host python), the InferenceX CI convention
 (`local-chat-completions`, chat template, `eval/ci/gsm8k_ci.yaml`, max_tokens 12288, reasoning_content fallback via
 `eval/ci/sitecustomize.py`), on a subset: `LIMIT=100 CONCURRENT=20 PORT=8888 OUT=c20 ./run_gsm8k.sh` prints
-flexible-extract / strict-match exact_match (M3 MXFP4 scores ~0.96 on the full set). The server must run
+flexible-extract / strict-match exact_match (M3 MXFP4: 0.98 / 0.97 on the 100-question subset at conc 4 / 20,
+~0.96 on the full set). Not part of the perf A/B — run it when the accuracy is in doubt. The server must run
 speculative decoding **off or with real rejection sampling** — synthetic acceptance (the InferenceX perf recipe)
-accepts draft tokens at random and the score is meaningless.
+accepts draft tokens at random and the score is meaningless; the method is fixed at engine start, so that
+means a server restart.
