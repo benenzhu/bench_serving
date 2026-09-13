@@ -17,7 +17,8 @@ prefix hits are exact and no tokenizer round trip is involved. One seed fixes ev
 
 The result JSON uses benchmark_serving.py's key names (median_ttft_ms, p99_tpot_ms, output_throughput,
 ...) plus the per-turn records. ITL is per streamed chunk (the server's --stream-interval); TPOT is the
-per-token decode latency, (latency - ttft) / (tokens - 1).
+per-token decode latency, (latency - ttft) / (tokens - 1); interactivity (pNN_interactivity, tok/s/user) is
+InferenceX's definition: 1000 / TPOT of each turn, percentiled across turns (p90 = the snappiest tenth).
 """
 import argparse
 import asyncio
@@ -200,6 +201,13 @@ def summarize(args, sessions, warm_recs, records, t_warm, t_turns):
         res[f"std_{name}_ms"] = statistics.pstdev(vals) if len(vals) > 1 else 0.0
         for p in PERCENTILES:
             res[f"p{p}_{name}_ms"] = pct(vals, p)
+    # InferenceX / aiperf "interactivity": 1000 / TPOT of each turn (tok/s/user), percentiled across turns --
+    # its p90 is the snappiest tenth of the turns, its p10 the slowest tenth (= 1000 / p90 TPOT).
+    intvty = [1000.0 / t for t in tpot if t > 0]
+    res["mean_interactivity"] = statistics.mean(intvty) if intvty else float("nan")
+    res["median_interactivity"] = statistics.median(intvty) if intvty else float("nan")
+    for p in sorted({10, 50, 90} | set(PERCENTILES)):
+        res[f"p{p}_interactivity"] = pct(intvty, p)
     res["warm"] = warm_recs
     res["turns_detail"] = records
     return res
@@ -219,6 +227,9 @@ def print_summary(res):
     for name in ("ttft", "tpot", "itl", "e2el"):
         print(f"{name+' ms':<10}{res[f'mean_{name}_ms']:>10.2f}{res[f'median_{name}_ms']:>10.2f}"
               f"{res[f'p90_{name}_ms']:>10.2f}{res[f'p95_{name}_ms']:>10.2f}{res[f'p99_{name}_ms']:>10.2f}")
+    print(f"{'intvty':<10}{res['mean_interactivity']:>10.1f}{res['median_interactivity']:>10.1f}"
+          f"{res['p90_interactivity']:>10.1f}{res['p95_interactivity']:>10.1f}{res['p99_interactivity']:>10.1f}"
+          f"  tok/s/user = 1000 / TPOT per turn (p10 {res['p10_interactivity']:.1f})")
     print("=" * 72)
 
 
